@@ -1,6 +1,8 @@
 import os
 import time
 import requests
+import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -78,6 +80,7 @@ def get_match_data(match_id):
     '''
     match_url = f'https://americas.api.riotgames.com/lol/match/v5/matches/{match_id}?api_key={API_KEY}'
     timeline_url = f'https://americas.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline?api_key={API_KEY}'
+
     try:
         match_response = requests.get(match_url, headers=HEADERS)
         timeline_response = requests.get(timeline_url, headers=HEADERS)
@@ -85,17 +88,122 @@ def get_match_data(match_id):
         match_response.raise_for_status()
         timeline_response.raise_for_status()
 
-        match_json_response = match_response.json()
-        timeline_json_response = timeline_response.json()
+        match_data = match_response.json()
+        timeline_data = timeline_response.json()
 
-        output = {
-            'match_data': match_json_response,
-            'timeline_data': timeline_json_response
-        }
     except Exception as e:
         print(f"Error fetching URL: {e.reason}")
 
-    return output
+    ### Timeline Data
+
+    participantids = []
+    playerpuuids = []
+
+    for player in timeline_data['info']['participants']:
+        participantId = player['participantId']
+        playerPuuid = player['puuid']
+
+        if len(playerPuuid) != 78:
+            print(f'Error Getting Puuid for Participant {participantId}')
+            playerPuuid = np.nan
+
+        participantids.append(participantId)
+        playerpuuids.append(playerPuuid)
+
+    if len(participantids) != len(playerpuuids):
+        print('Error creating dataframe')
+    else:
+        data = {
+            'player_number': participantids,
+            'puuid': playerpuuids
+        }
+
+        player_map = pd.DataFrame(data)
+
+    champ_stats_frames = []
+    damage_stats_frames = []
+    position_frames = []
+    misc_frames = []
+    for i in range(len(timeline_data['info']['frames'])):
+        for player in player_map['player_number'].to_list():
+            frame = timeline_data['info']['frames'][i]['participantFrames'][f'{player}']
+
+            champ_stats = frame['championStats']
+            damage_stats = frame['damageStats']
+            position = frame['position']
+
+            keys = [
+                key for key in list(
+                    frame.keys()
+                ) if key not in ['championStats', 'damageStats', 'position']
+            ]
+            misc_stats = {key: frame[key] for key in keys}
+
+            champ_stats['currentFrame'] = i + 1
+            champ_stats['participantId'] = player
+            damage_stats['currentFrame'] = i + 1
+            damage_stats['participantId'] = player
+            position['currentFrame'] = i + 1
+            position['participantId'] = player
+
+            misc_stats['currentFrame'] = i + 1
+
+            champ_stats_frames.append(champ_stats)
+            damage_stats_frames.append(damage_stats)
+            position_frames.append(position)
+            misc_frames.append(misc_stats)
+
+    champ_stats = pd.DataFrame(champ_stats_frames)
+    damage_stats = pd.DataFrame(damage_stats_frames)
+    positions = pd.DataFrame(position_frames)
+    misc_stats = pd.DataFrame(misc_frames)
+
+    timeline_output = {
+        'player_map': player_map,
+        'champ_stats': champ_stats,
+        'damage_stats': damage_stats,
+        'positions': positions,
+        'misc_stats': misc_stats
+    }
+
+    ### Match Data
+
+    bans = []
+    for team in match_data['info']['teams']:
+        ban = team['bans']
+        for i in ban:
+            bans.append(i)
+
+    bans = (
+        pd
+        .DataFrame(bans)
+        .rename(columns={
+            'championId':'bannedChampionId', 
+            'pickTurn':'participantId'
+        })
+    )
+
+    data = []
+    for i in range(len(match_data['info']['participants'])):
+        keys = [
+            key for key in list(
+                match_data['info']['participants'][i].keys()
+            ) if key not in ['PlayerBehavior', 'challenges', 'missions', 'perks']
+        ]
+
+        data.append({key: match_data['info']['participants'][i][key] for key in keys})
+
+    data = pd.DataFrame(data)
+    data = data.merge(bans, on='participantId', how='left')
+
+    general_match_data = data[[col for col in data if 'PlayerScore' not in col]]
+
+    match_data_output = {
+        'general_match_data': general_match_data
+    }
+
+    return [timeline_output, match_data_output]
+
 
 def get_player_rank(puuid):
     ''' 
