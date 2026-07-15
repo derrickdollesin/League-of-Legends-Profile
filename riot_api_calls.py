@@ -51,6 +51,8 @@ def get_match_ids(puuid, start_time=1623801600, end_time=int(time.time()), game_
 
     Returns:
         - List of games played (list)
+            - ['player_map', 'champ_stats', 'damage_stats', 'positions', 'misc_stats']
+            - ['general_match_data']
     '''
     url = f'https://americas.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?startTime={start_time}&endTime={end_time}&type={game_type}&start=0&count=20&api_key={API_KEY}'
 
